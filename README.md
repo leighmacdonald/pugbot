@@ -1,0 +1,2 @@
+# pugbot
+Discord PUG coordinator
