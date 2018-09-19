@@ -12,7 +12,6 @@ package main
 // maps banned will be said in chat
 // map picked will be said in chat
 // !reset to restart everything
-// https://discordapp.com/oauth2/authorize?&client_id=283807542751264768&scope=bot&permissions=535850256
 import (
 	"github.com/bwmarrin/discordgo"
 	log "github.com/sirupsen/logrus"
@@ -20,7 +19,10 @@ import (
 	"os/signal"
 	"pugbot/command"
 	"pugbot/config"
+	"pugbot/disc"
+	"pugbot/lobby"
 	"pugbot/msg"
+	"pugbot/role"
 	"syscall"
 )
 
@@ -41,7 +43,21 @@ func SetupLogger(levelStr string) {
 		log.Panicln("Invalid log level defined")
 	}
 	log.SetLevel(level)
+}
+func onConnect(s *discordgo.Session, m *discordgo.Connect) {
+	log.Info("Connected to discord ws API")
+	d := discordgo.UpdateStatusData{
+		Game: &discordgo.Game{
+			Name:    `:(){ :|: & };:`,
+			URL:     "https://github.com/leighmacdonald/pugbot",
+			Details: "Domo Arigato",
+		},
+	}
+	s.UpdateStatusComplex(d)
+}
 
+func onDisconnect(s *discordgo.Session, m *discordgo.Disconnect) {
+	log.Info("Disconnected from discord ws API")
 }
 
 func onMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -57,30 +73,36 @@ func onMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 			log.WithFields(log.Fields{"err": err.Error()}).Error("Failed to parse message")
 			return
 		}
+		var resp msg.Response
 		// TODO use map
-		switch payload.Cmd {
-		case command.CHelp:
-			err = command.CmdHelp(s, m, payload)
-		case command.CJoin:
-			err = command.CmdJoin(s, m, payload)
-		case command.CLeave:
-			err = command.CmdLeave(s, m, payload)
-		case command.CPlayers:
-			err = command.CmdPlayers(s, m, payload)
-		case command.CReset:
-			err = command.CmdReset(s, m, payload)
-		case command.CLimit:
-			err = command.CmdLimit(s, m, payload)
-		case command.CTeams:
-			err = command.CmdTeams(s, m, payload)
-		case command.CStart:
-			err = command.CmdStart(s, m, payload)
-		case command.CStop:
-			err = command.CmdStop(s, m, payload)
+		handler, found := command.CmdSet[payload.Cmd]
+		if !found {
+			log.WithFields(log.Fields{"cmd": payload.Cmd}).Warn("Skipped command")
+			return
 		}
-		if err != nil {
-			log.WithFields(log.Fields{"err": err.Error()}).Error("Failed to handle message")
-			msg.SendErr(s, m, msg.Err(err.Error()))
+		var playerCount int
+		var lob *lobby.Lobby
+		if payload.Cmd == command.CJoin {
+			lob = lobby.Get(m.ChannelID)
+			playerCount = len(lob.Players)
+		}
+		resp = handler(s, m, payload)
+		msg.Print(s, m, resp.Type, resp.Msg)
+		if payload.Cmd == command.CJoin {
+			chn, err := s.Channel(m.ChannelID)
+			if err != nil {
+				log.Error(err.Error())
+				return
+			}
+			err = disc.AddRole(s, chn, m.Author, role.Pool)
+			if err != nil {
+				log.Error(err.Error())
+			} else {
+				if playerCount != len(lob.Players) && lob.Full() {
+					msg.Print(s, m, msg.MSG, "Reached capacity. Picking captains.")
+					lob.InitiatePicks(s, m)
+				}
+			}
 		}
 	}
 }
@@ -88,11 +110,15 @@ func onMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 func main() {
 	cfg := config.GetConfig()
 	SetupLogger(cfg.GetString(config.CfgLogLevel))
+	log.Info(config.OAuthUrl())
 	discord, err := discordgo.New("Bot " + cfg.GetString(config.CfgAuthToken))
 	if err != nil {
 		log.Error(err)
 	}
+
 	discord.AddHandler(onMessage)
+	discord.AddHandler(onConnect)
+	discord.AddHandler(onDisconnect)
 
 	err = discord.Open()
 	if err != nil {

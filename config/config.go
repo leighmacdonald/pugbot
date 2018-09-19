@@ -1,15 +1,16 @@
 package config
 
 import (
+	"fmt"
 	"github.com/spf13/viper"
 	"log"
 )
 
 const (
 	CfgLogLevel = "log.level"
-	//CfgAuthId     = "auth.id"
+	CfgAuthId   = "auth.id"
 	//CfgAuthSecret = "auth.secret"
-	//CfgAuthPerms  = "auth.perms"
+	CfgAuthPerms = "auth.perms"
 	CfgAuthToken = "auth.token"
 )
 
@@ -36,6 +37,15 @@ func Init(env string) {
 	// Logger
 	config.SetDefault(CfgLogLevel, "info")
 	configured = true
+}
+
+func OAuthUrl() string {
+	cfg := GetConfig()
+	return fmt.Sprintf(
+		"https://discordapp.com/api/oauth2/authorize?client_id=%d&scope=bot&permissions=%d",
+		cfg.GetInt64(CfgAuthId),
+		cfg.GetInt64(CfgAuthPerms),
+	)
 }
 
 func GetConfig() *viper.Viper {
